@@ -8,7 +8,7 @@ import shutil
 import models, schemas, database
 from auth import get_current_organizer
 
-router = APIRouter(prefix="/api/organizer", tags=["Organizer"])
+router = APIRouter(prefix="/organizer", tags=["Organizer"])
 
 @router.post("/activities/upload-image")
 def upload_activity_image(

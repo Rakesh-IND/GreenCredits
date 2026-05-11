@@ -6,7 +6,7 @@ from typing import List
 import models, schemas, database
 from auth import get_current_volunteer
 
-router = APIRouter(prefix="/api/volunteer", tags=["Volunteer"])
+router = APIRouter(prefix="/volunteer", tags=["Volunteer"])
 
 @router.get("/activities/nearby", response_model=List[schemas.ActivityResponse])
 def get_nearby_activities(

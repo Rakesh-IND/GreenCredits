@@ -28,10 +28,10 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.middleware("http")
-async def restore_api_prefix_for_service_routes(request, call_next):
+async def normalize_api_prefix_for_local_routes(request, call_next):
     path = request.scope.get("path", "")
-    if path.startswith(("/auth", "/users", "/activities", "/organizer", "/volunteer")):
-        request.scope["path"] = f"/api{path}"
+    if not request.scope.get("root_path") and path.startswith("/api/"):
+        request.scope["path"] = path.removeprefix("/api")
     return await call_next(request)
 
 app.add_middleware(
@@ -46,7 +46,7 @@ app.add_middleware(
 app.include_router(organizer.router)
 app.include_router(volunteer.router)
 
-@app.post("/api/auth/register", response_model=schemas.UserResponse, tags=["Authentication"])
+@app.post("/auth/register", response_model=schemas.UserResponse, tags=["Authentication"])
 def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     """Register a new user as either a volunteer or an organizer."""
     db_user = db.query(models.User).filter(models.User.email == user.email).first()
@@ -75,7 +75,7 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_d
     
     return new_user
 
-@app.post("/api/auth/login", response_model=schemas.Token, tags=["Authentication"])
+@app.post("/auth/login", response_model=schemas.Token, tags=["Authentication"])
 def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(), 
     db: Session = Depends(database.get_db)
@@ -93,7 +93,7 @@ def login_for_access_token(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/api/users/me", response_model=schemas.UserProfile, tags=["Users"])
+@app.get("/users/me", response_model=schemas.UserProfile, tags=["Users"])
 def read_users_me(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(database.get_db)
@@ -118,7 +118,7 @@ def read_users_me(
         
     return current_user
 
-@app.get("/api/activities/all", response_model=List[schemas.ActivityResponse], tags=["Activities"])
+@app.get("/activities/all", response_model=List[schemas.ActivityResponse], tags=["Activities"])
 def get_all_activities(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(database.get_db)
