@@ -25,7 +25,9 @@ def upload_activity_image(
         )
     
     filename = f"{uuid.uuid4()}_{file.filename}"
-    static_dir = os.getenv("GREEN_CREDITS_STATIC_DIR", "static")
+    static_dir = os.getenv("GREEN_CREDITS_STATIC_DIR")
+    if not static_dir:
+        static_dir = "/tmp/greencredits/static" if os.getenv("VERCEL") else "static"
     os.makedirs(static_dir, exist_ok=True)
     upload_path = os.path.join(static_dir, filename)
     
@@ -38,7 +40,11 @@ def upload_activity_image(
             detail=f"Failed to save image: {str(e)}"
         )
         
-    return {"image_url": f"/static/{filename}"}
+    static_url_prefix = os.getenv("GREEN_CREDITS_STATIC_URL_PREFIX")
+    if not static_url_prefix:
+        static_url_prefix = "/api/static" if os.getenv("VERCEL") else "/static"
+
+    return {"image_url": f"{static_url_prefix.rstrip('/')}/{filename}"}
 
 @router.post("/activities", response_model=schemas.ActivityResponse)
 def create_activity(

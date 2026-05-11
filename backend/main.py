@@ -21,9 +21,18 @@ app = FastAPI(
 models.Base.metadata.create_all(bind=database.engine)
 
 # Ensure static files directory exists
-STATIC_DIR = os.getenv("GREEN_CREDITS_STATIC_DIR", "static")
+STATIC_DIR = os.getenv("GREEN_CREDITS_STATIC_DIR")
+if not STATIC_DIR:
+    STATIC_DIR = "/tmp/greencredits/static" if os.getenv("VERCEL") else "static"
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.middleware("http")
+async def restore_api_prefix_for_service_routes(request, call_next):
+    path = request.scope.get("path", "")
+    if path.startswith(("/auth", "/users", "/activities", "/organizer", "/volunteer")):
+        request.scope["path"] = f"/api{path}"
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,

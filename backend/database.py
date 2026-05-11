@@ -7,6 +7,9 @@ from config import settings
 
 def resolve_database_url(database_url: str) -> str:
     runtime_dir = os.getenv("GREEN_CREDITS_RUNTIME_DIR")
+    if not runtime_dir and os.getenv("VERCEL"):
+        runtime_dir = "/tmp/greencredits"
+
     if not runtime_dir or not database_url.startswith("sqlite:///./"):
         return database_url
 
