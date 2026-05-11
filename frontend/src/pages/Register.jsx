@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ShieldCheck } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import { supabase, isGoogleAuthEnabled } from '../lib/supabaseClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -17,8 +17,8 @@ const Register = () => {
   const navigate = useNavigate();
 
   const handleGoogleRegister = async () => {
-    if (!isSupabaseConfigured) {
-      setError('Google sign-up is not configured yet.');
+    if (!isGoogleAuthEnabled) {
+      setError('Google sign-up is being configured. Please use email and password for now.');
       return;
     }
 
@@ -79,7 +79,14 @@ const Register = () => {
         const userResponse = await fetch(`${API_BASE_URL}/api/users/me`, {
           headers: { 'Authorization': `Bearer ${data.access_token}` }
         });
+        if (!userResponse.ok) {
+          throw new Error('Account was created, but profile loading failed. Please sign in.');
+        }
+
         const userData = await userResponse.json();
+        if (userData.role !== role) {
+          throw new Error(`Expected ${role} account but received ${userData.role}. Please contact support.`);
+        }
         localStorage.setItem('user', JSON.stringify(userData));
         
         navigate('/dashboard');
@@ -169,21 +176,29 @@ const Register = () => {
           </button>
         </form>
 
-        <div className="my-6 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">or</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
+        {isGoogleAuthEnabled ? (
+          <>
+            <div className="my-6 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">or</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-        <button
-          type="button"
-          onClick={handleGoogleRegister}
-          disabled={googleLoading}
-          className="flex w-full items-center justify-center gap-3 rounded-full border border-border bg-white px-5 py-3 text-sm font-semibold text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md disabled:opacity-70"
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-bold shadow-sm">G</span>
-          {googleLoading ? 'Opening Google...' : `Continue with Google as ${role}`}
-        </button>
+            <button
+              type="button"
+              onClick={handleGoogleRegister}
+              disabled={googleLoading}
+              className="flex w-full items-center justify-center gap-3 rounded-full border border-border bg-white px-5 py-3 text-sm font-semibold text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md disabled:opacity-70"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-bold shadow-sm">G</span>
+              {googleLoading ? 'Opening Google...' : `Continue with Google as ${role}`}
+            </button>
+          </>
+        ) : (
+          <div className="mt-5 rounded-xl bg-slate-50 px-4 py-3 text-xs text-muted-foreground">
+            Google sign-up will appear after the Google provider is enabled in Supabase. Email registration below is fully active for both roles.
+          </div>
+        )}
         
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Already have an account? <Link to="/login" className="text-accent cursor-pointer hover:underline">Sign In here</Link>

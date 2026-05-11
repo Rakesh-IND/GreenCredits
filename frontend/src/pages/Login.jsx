@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Leaf, ShieldCheck } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import { supabase, isGoogleAuthEnabled } from '../lib/supabaseClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -15,8 +15,8 @@ const Login = () => {
   const navigate = useNavigate();
 
   const handleGoogleLogin = async () => {
-    if (!isSupabaseConfigured) {
-      setError('Google sign-in is not configured yet.');
+    if (!isGoogleAuthEnabled) {
+      setError('Google sign-in is being configured. Please use email and password for now.');
       return;
     }
 
@@ -75,6 +75,10 @@ const Login = () => {
         }
       });
       
+      if (!userResponse.ok) {
+        throw new Error('Unable to load your profile. Please try again.');
+      }
+
       const userData = await userResponse.json();
       localStorage.setItem('user', JSON.stringify(userData));
       
@@ -147,26 +151,30 @@ const Login = () => {
           </button>
         </form>
 
-        <div className="my-6 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">or</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
+        {isGoogleAuthEnabled ? (
+          <>
+            <div className="my-6 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">or</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-        <button
-          type="button"
-          onClick={handleGoogleLogin}
-          disabled={googleLoading}
-          className="flex w-full items-center justify-center gap-3 rounded-full border border-border bg-white px-5 py-3 text-sm font-semibold text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md disabled:opacity-70"
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-bold shadow-sm">G</span>
-          {googleLoading ? 'Opening Google...' : 'Continue with Google'}
-        </button>
-
-        <div className="mt-5 flex items-start gap-3 rounded-xl bg-slate-50 px-4 py-3 text-xs text-muted-foreground">
-          <Leaf className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-          <span>Google accounts join as volunteers by default. Choose Organizer on sign up when creating an organization account.</span>
-        </div>
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={googleLoading}
+              className="flex w-full items-center justify-center gap-3 rounded-full border border-border bg-white px-5 py-3 text-sm font-semibold text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md disabled:opacity-70"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-bold shadow-sm">G</span>
+              {googleLoading ? 'Opening Google...' : 'Continue with Google'}
+            </button>
+          </>
+        ) : (
+          <div className="mt-5 flex items-start gap-3 rounded-xl bg-slate-50 px-4 py-3 text-xs text-muted-foreground">
+            <Leaf className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            <span>Email sign-in is active. Google sign-in will appear here after the Google provider is enabled in Supabase.</span>
+          </div>
+        )}
         
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Don't have an account? <Link to="/register" className="text-accent cursor-pointer hover:underline">Sign Up here</Link>
