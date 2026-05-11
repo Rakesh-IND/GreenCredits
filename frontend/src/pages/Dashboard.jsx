@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   ChevronDown, Bell, Plus, MoreVertical, Search, CheckCircle, LogOut, Sparkles, Star, Trophy,
-  Gift, Award, Leaf, Heart, Zap, ShoppingBag, Coffee, TreePine, Droplets, MapPin
+  Gift, Award, Leaf, Heart, Zap, ShoppingBag, Coffee, TreePine, Droplets, MapPin, BarChart3, CalendarCheck, ShieldCheck
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -335,8 +335,44 @@ const Dashboard = () => {
   };
 
   if (loading || !user) {
-    return <div className="min-h-screen flex items-center justify-center">Loading Dashboard...</div>;
+    return (
+      <div className="min-h-screen bg-[linear-gradient(135deg,#f8fffb_0%,#eef8f4_48%,#f8fbff_100%)] flex items-center justify-center">
+        <div className="rounded-2xl border border-white/70 bg-white/80 px-6 py-5 text-sm font-medium text-emerald-800 shadow-dashboard backdrop-blur-xl">
+          Loading dashboard...
+        </div>
+      </div>
+    );
   }
+
+  const credits = user.total_credits || 0;
+  const completedCount = ledger.filter(item => item.transaction_type === 'earned').length;
+  const redeemedCount = ledger.filter(item => item.transaction_type === 'redeemed').length;
+  const projectedTrees = Math.max(1, Math.floor(credits / 200));
+  const activeCount = activities.filter(item => item.is_active !== false).length;
+
+  const renderImpactPanel = () => (
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      {[
+        { label: 'Verified actions', value: completedCount, detail: 'Ledger-backed activity records', icon: CalendarCheck, tone: 'emerald' },
+        { label: 'Rewards redeemed', value: redeemedCount, detail: 'Immutable credit deductions', icon: Gift, tone: 'rose' },
+        { label: 'Tree equivalent', value: `${projectedTrees}x`, detail: 'Estimated from credit balance', icon: TreePine, tone: 'cyan' },
+      ].map(({ label, value, detail, icon: Icon, tone }) => (
+        <div key={label} className="rounded-2xl border border-white/70 bg-white/75 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.05)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-dashboard">
+          <div className="flex items-center justify-between">
+            <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${tone === 'emerald' ? 'bg-emerald-50 text-emerald-700' : tone === 'rose' ? 'bg-rose-50 text-rose-600' : 'bg-cyan-50 text-cyan-700'}`}>
+              <Icon className="h-5 w-5" />
+            </div>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">Live</span>
+          </div>
+          <div className="mt-5">
+            <p className="text-sm font-medium text-muted-foreground">{label}</p>
+            <p className="mt-1 text-3xl font-semibold tracking-tight text-foreground">{value}</p>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   // Common components
   const renderStatsCard = () => (
@@ -960,19 +996,15 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-body text-foreground relative overflow-hidden">
+    <div className="min-h-screen bg-[linear-gradient(135deg,#f8fffb_0%,#eef8f4_48%,#f8fbff_100%)] flex flex-col font-body text-foreground relative overflow-hidden">
 
       {/* Immersive Animated Background Layers */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        {/* User's custom background collage */}
         <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.25] mix-blend-multiply"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.12] mix-blend-multiply"
           style={{ backgroundImage: 'url("/bg-collage.jpg")' }}
         />
-        <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[60%] rounded-full bg-emerald-200/30 blur-[120px] animate-pulse-slow mix-blend-multiply" />
-        <div className="absolute top-[20%] -right-[10%] w-[45%] h-[55%] rounded-full bg-teal-200/30 blur-[100px] animate-pulse-slow mix-blend-multiply" style={{ animationDelay: '2s' }} />
-        <div className="absolute -bottom-[20%] left-[20%] w-[60%] h-[50%] rounded-full bg-cyan-200/20 blur-[120px] animate-pulse-slow mix-blend-multiply" style={{ animationDelay: '4s' }} />
-        <div className="absolute inset-0 bg-grid-black opacity-[0.03]" />
+        <div className="absolute inset-0 bg-grid-black opacity-[0.04]" />
       </div>
       {/* Top Bar */}
       <div className="h-14 border-b border-border/50 bg-background flex items-center justify-between px-6 shrink-0 shadow-sm relative z-50">
@@ -1073,7 +1105,7 @@ const Dashboard = () => {
         <div className="w-56 border-r border-border/50 p-4 flex-col gap-2 shrink-0 bg-white/40 backdrop-blur-sm hidden md:flex z-10">
           <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-3 mt-4 px-2">Platform</div>
 
-          {(['Dashboard', 'Activities', 'Ledger', 'Rewards', 'Settings']).map(tab => (
+          {(['Dashboard', 'Activities', 'Insights', 'Ledger', 'Rewards', 'Settings']).map(tab => (
             <div
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1082,6 +1114,7 @@ const Dashboard = () => {
               <span className="flex items-center gap-2">
                 {tab === 'Dashboard' && <Sparkles className="w-4 h-4" />}
                 {tab === 'Activities' && <Leaf className="w-4 h-4" />}
+                {tab === 'Insights' && <BarChart3 className="w-4 h-4" />}
                 {tab === 'Ledger' && <CheckCircle className="w-4 h-4" />}
                 {tab === 'Rewards' && <Gift className="w-4 h-4 text-emerald-500" />}
                 {tab === 'Settings' && <Star className="w-4 h-4" />}
@@ -1140,6 +1173,7 @@ const Dashboard = () => {
 
           {activeTab === 'Dashboard' && (
             <div className="flex flex-col gap-6 w-full max-h-[calc(100vh-220px)] overflow-y-auto pr-2 pb-4 animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both">
+              {renderImpactPanel()}
               <div className="flex flex-col lg:flex-row gap-6 mb-6">
                 {renderStatsCard()}
 
@@ -1201,6 +1235,53 @@ const Dashboard = () => {
           {activeTab === 'Rewards' && (
             <div className="flex flex-col gap-6 w-full">
               {renderRewardsTab()}
+            </div>
+          )}
+
+          {activeTab === 'Insights' && (
+            <div className="flex flex-col gap-6 w-full max-h-[calc(100vh-220px)] overflow-y-auto pr-2 pb-4 animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both">
+              {renderImpactPanel()}
+              <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
+                <div className="rounded-2xl border border-white/70 bg-white/80 p-6 shadow-dashboard backdrop-blur-xl">
+                  <div className="mb-6 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-foreground">Impact Momentum</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">A practical snapshot of credit flow and platform activity.</p>
+                    </div>
+                    <BarChart3 className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <div className="space-y-5">
+                    {[
+                      { label: 'Credit balance', value: Math.min(100, Math.round((credits / 1000) * 100)), caption: `${Math.floor(credits)} credits` },
+                      { label: 'Activity availability', value: Math.min(100, activeCount * 12), caption: `${activeCount} active activities` },
+                      { label: 'Reward engagement', value: Math.min(100, redeemedCount * 18), caption: `${redeemedCount} redemptions` },
+                    ].map(item => (
+                      <div key={item.label}>
+                        <div className="mb-2 flex items-center justify-between text-sm">
+                          <span className="font-medium text-foreground">{item.label}</span>
+                          <span className="text-muted-foreground">{item.caption}</span>
+                        </div>
+                        <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 transition-all duration-700" style={{ width: `${Math.max(8, item.value)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-white/70 bg-white/80 p-6 shadow-dashboard backdrop-blur-xl">
+                  <div className="mb-5 flex items-center gap-3">
+                    <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                    <h2 className="text-lg font-semibold text-foreground">Trust Layer</h2>
+                  </div>
+                  <div className="space-y-4 text-sm text-muted-foreground">
+                    <p>Supabase stores the platform data, while the app keeps credit changes ledger-backed and auditable.</p>
+                    <p>Google sign-in is routed through Supabase Auth, then exchanged for the Green Credits API token used across protected routes.</p>
+                    <button onClick={() => setActiveTab('Ledger')} className="mt-2 w-full rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-background transition-colors hover:bg-foreground/90">
+                      Review ledger
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

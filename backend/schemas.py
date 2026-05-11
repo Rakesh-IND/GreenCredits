@@ -11,6 +11,10 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
+class SupabaseAuthRequest(BaseModel):
+    access_token: str
+    role: RoleEnum = RoleEnum.volunteer
+
 class UserResponse(UserBase):
     id: int
 

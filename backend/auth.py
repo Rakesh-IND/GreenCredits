@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import bcrypt
+import httpx
 from jose import JWTError, jwt
 import models, schemas, database
 from config import settings
@@ -17,7 +18,10 @@ from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 def verify_password(plain_password, hashed_password):
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    try:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except ValueError:
+        return False
 
 def get_password_hash(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -31,6 +35,35 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+def verify_supabase_token(access_token: str) -> dict:
+    if not settings.SUPABASE_URL or not settings.SUPABASE_PUBLISHABLE_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase authentication is not configured."
+        )
+
+    url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/user"
+    headers = {
+        "apikey": settings.SUPABASE_PUBLISHABLE_KEY,
+        "Authorization": f"Bearer {access_token}",
+    }
+
+    try:
+        response = httpx.get(url, headers=headers, timeout=10)
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to reach Supabase authentication."
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Supabase session."
+        )
+
+    return response.json()
 
 # --- Dependencies --- #
 

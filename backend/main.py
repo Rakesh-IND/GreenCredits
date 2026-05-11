@@ -93,6 +93,43 @@ def login_for_access_token(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.post("/auth/supabase", response_model=schemas.Token, tags=["Authentication"])
+def login_with_supabase(
+    payload: schemas.SupabaseAuthRequest,
+    db: Session = Depends(database.get_db)
+):
+    """Exchange a verified Supabase session, including Google OAuth sessions, for an API token."""
+    supabase_user = auth.verify_supabase_token(payload.access_token)
+    email = supabase_user.get("email")
+    supabase_user_id = supabase_user.get("id", "unknown")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Supabase user has no email address.")
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        user = models.User(
+            email=email,
+            hashed_password=f"supabase:{supabase_user_id}",
+            role=payload.role
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        db.add(models.Ledger(
+            user_id=user.id,
+            amount=100.0,
+            transaction_type=models.TransactionType.earned,
+            description="Welcome Bonus"
+        ))
+        db.commit()
+
+    access_token = auth.create_access_token(
+        data={"sub": user.email, "role": user.role.value}
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
 @app.get("/users/me", response_model=schemas.UserProfile, tags=["Users"])
 def read_users_me(
     current_user: models.User = Depends(auth.get_current_user),
