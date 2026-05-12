@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List
@@ -90,7 +91,20 @@ def qr_checkin(
         activity_id=activity.id
     )
     db.add(participation)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="You have already checked into this activity."
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to complete check-in. Please try again."
+        )
     
     return {"msg": "Successfully checked in! Waiting for organizer to award credits."}
 
@@ -180,16 +194,36 @@ def redeem_reward(
             status_code=400,
             detail=f"Insufficient credits. You need {reward.cost} credits but only have {balance:.0f}."
         )
+
+    redemption_description = f"Redeemed reward: {reward.name}"
+    existing_redemption = db.query(models.Ledger).filter(
+        models.Ledger.user_id == current_user.id,
+        models.Ledger.transaction_type == models.TransactionType.redeemed,
+        models.Ledger.description == redemption_description
+    ).first()
+
+    if existing_redemption:
+        raise HTTPException(
+            status_code=400,
+            detail="You have already redeemed this reward."
+        )
     
     # Write immutable ledger entry for the redemption
     entry = models.Ledger(
         user_id=current_user.id,
         amount=reward.cost,
         transaction_type=models.TransactionType.redeemed,
-        description=f"Redeemed reward: {reward.name}"
+        description=redemption_description
     )
     db.add(entry)
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to redeem reward. Please try again."
+        )
     
     remaining = balance - reward.cost
     return {

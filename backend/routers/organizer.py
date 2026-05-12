@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List
 import uuid
@@ -9,6 +10,16 @@ import models, schemas, database
 from auth import get_current_organizer
 
 router = APIRouter(prefix="/organizer", tags=["Organizer"])
+
+def _commit_or_500(db: Session, detail: str):
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=detail
+        )
 
 @router.post("/activities/upload-image")
 def upload_activity_image(
@@ -69,7 +80,7 @@ def create_activity(
         organizer_id=current_user.id
     )
     db.add(new_activity)
-    db.commit()
+    _commit_or_500(db, "Unable to create activity. Please try again.")
     db.refresh(new_activity)
     return new_activity
 
@@ -183,7 +194,7 @@ def bulk_award_credits(
             db.add(ledger_entry)
             awarded_count += 1
             
-    db.commit()
+    _commit_or_500(db, "Unable to award credits. Please try again.")
     return {"msg": f"Successfully awarded credits to {awarded_count} volunteers."}
 
 @router.post("/rewards", response_model=schemas.RewardResponse)
@@ -202,7 +213,7 @@ def create_reward(
         organizer_id=current_user.id
     )
     db.add(new_reward)
-    db.commit()
+    _commit_or_500(db, "Unable to create reward. Please try again.")
     db.refresh(new_reward)
     return new_reward
 
@@ -229,7 +240,7 @@ def create_badge(
         organizer_id=current_user.id
     )
     db.add(new_badge)
-    db.commit()
+    _commit_or_500(db, "Unable to create badge. Please try again.")
     db.refresh(new_badge)
     return new_badge
 

@@ -8,6 +8,13 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
+const parseApiError = (data, fallback) => {
+  if (Array.isArray(data?.detail)) {
+    return data.detail.map(item => item.msg).filter(Boolean).join(', ') || fallback;
+  }
+  return data?.detail || data?.message || fallback;
+};
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -46,6 +53,12 @@ const Dashboard = () => {
   const [newBadge, setNewBadge] = useState({ name: '', description: '', icon_emoji: '🏆', required_credits: 500 });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const handleSessionExpired = () => {
+    localStorage.clear();
+    toast.error('Session expired. Please sign in again.');
+    navigate('/login');
+  };
+
   const handleImageChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -68,13 +81,15 @@ const Dashboard = () => {
         body: formData
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (res.ok) {
-        const data = await res.json();
         setNewActivity(prev => ({ ...prev, image_url: data.image_url }));
         toast.success('Image uploaded successfully!');
+      } else if (res.status === 401) {
+        handleSessionExpired();
       } else {
-        const data = await res.json();
-        toast.error(data.detail || 'Error uploading image');
+        toast.error(parseApiError(data, 'Image upload failed. You can still create the activity without it.'));
       }
     } catch (err) {
       toast.error('Error uploading image');
@@ -243,14 +258,15 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ qr_string: checkinQr })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         toast.success(data.msg || data.detail || "Checked in successfully!");
         setCheckinQr('');
         fetchData(token);
+      } else if (res.status === 401) {
+        handleSessionExpired();
       } else {
-        const errorMsg = Array.isArray(data.detail) ? "Invalid QR code format" : (data.detail || "Error checking in");
-        toast.error(errorMsg);
+        toast.error(parseApiError(data, "Error checking in"));
       }
     } catch (e) {
       toast.error("Error checking in");
@@ -273,13 +289,15 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setActivities([...activities, { ...data, status: 'Active', reward: data.credits_reward }]);
         setNewActivity({ title: '', credits_reward: 100, image_url: '' });
         toast.success('Activity created successfully!');
+      } else if (res.status === 401) {
+        handleSessionExpired();
       } else {
-        toast.error(data.detail);
+        toast.error(parseApiError(data, 'Error creating activity'));
       }
     } catch (e) {
       toast.error("Error creating activity");
@@ -293,12 +311,14 @@ const Dashboard = () => {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         toast.success(data.msg || "Credits awarded!");
         fetchData(token);
+      } else if (res.status === 401) {
+        handleSessionExpired();
       } else {
-        toast.error(data.detail || "Error awarding credits");
+        toast.error(parseApiError(data, "Error awarding credits"));
       }
     } catch (e) {
       toast.error("Error awarding credits");
@@ -319,13 +339,15 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ reward_id: reward.id })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         toast.success(data.msg || 'Reward claimed!');
         setClaimedRewards(prev => [...prev, reward.id]);
         fetchData(token);
+      } else if (res.status === 401) {
+        handleSessionExpired();
       } else {
-        toast.error(data.detail || 'Failed to claim reward');
+        toast.error(parseApiError(data, 'Failed to claim reward'));
       }
     } catch (e) {
       toast.error('Error connecting to server');
@@ -463,12 +485,16 @@ const Dashboard = () => {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify(newReward)
         });
+        const data = await res.json().catch(() => ({}));
         if (res.ok) {
           toast.success("Reward created!");
-          const data = await res.json();
           setCatalogRewards([...catalogRewards, data]);
           setNewReward({ name: '', description: '', cost: 100, icon_emoji: '🎁', color_gradient: 'from-emerald-500 to-teal-500' });
-        } else toast.error("Error creating reward");
+        } else if (res.status === 401) {
+          handleSessionExpired();
+        } else {
+          toast.error(parseApiError(data, "Error creating reward"));
+        }
       } finally { setIsSubmitting(false); }
     };
 
@@ -482,12 +508,16 @@ const Dashboard = () => {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify(newBadge)
         });
+        const data = await res.json().catch(() => ({}));
         if (res.ok) {
           toast.success("Badge created!");
-          const data = await res.json();
           setCatalogBadges([...catalogBadges, data]);
           setNewBadge({ name: '', description: '', icon_emoji: '🏆', required_credits: 500 });
-        } else toast.error("Error creating badge");
+        } else if (res.status === 401) {
+          handleSessionExpired();
+        } else {
+          toast.error(parseApiError(data, "Error creating badge"));
+        }
       } finally { setIsSubmitting(false); }
     };
 

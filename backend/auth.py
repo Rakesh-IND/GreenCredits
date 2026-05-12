@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import bcrypt
 import httpx
 from jose import JWTError, jwt
@@ -76,6 +77,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
+        token_role = payload.get("role")
         if email is None:
             raise credentials_exception
     except JWTError:
@@ -83,7 +85,29 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         
     user = db.query(models.User).filter(models.User.email == email).first()
     if user is None:
-        raise credentials_exception
+        try:
+            role = models.RoleEnum(token_role)
+        except (TypeError, ValueError):
+            raise credentials_exception
+
+        try:
+            user = models.User(
+                email=email,
+                hashed_password=f"token-recovered:{email}",
+                role=role
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        except IntegrityError:
+            db.rollback()
+            user = db.query(models.User).filter(models.User.email == email).first()
+        except SQLAlchemyError:
+            db.rollback()
+            raise credentials_exception
+
+        if user is None:
+            raise credentials_exception
     return user
 
 def get_current_volunteer(current_user: models.User = Depends(get_current_user)):
