@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 
 import models, database, auth, schemas
+import supabase_store
 from routers import organizer, volunteer
 from config import settings
 
@@ -18,7 +19,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-models.Base.metadata.create_all(bind=database.engine)
+if not database.use_supabase_store():
+    models.Base.metadata.create_all(bind=database.engine)
 
 # Ensure static files directory exists
 STATIC_DIR = os.getenv("GREEN_CREDITS_STATIC_DIR")
@@ -49,6 +51,19 @@ app.include_router(volunteer.router)
 @app.post("/auth/register", response_model=schemas.UserResponse, tags=["Authentication"])
 def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     """Register a new user as either a volunteer or an organizer."""
+    if database.use_supabase_store():
+        db_user = supabase_store.get_user_by_email(user.email)
+        if db_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        new_user = supabase_store.create_user(
+            email=user.email,
+            hashed_password=auth.get_password_hash(user.password),
+            role=user.role,
+        )
+        supabase_store.ensure_welcome_bonus(new_user.id)
+        return new_user
+
     db_user = db.query(models.User).filter(models.User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -81,6 +96,19 @@ def login_for_access_token(
     db: Session = Depends(database.get_db)
 ):
     """Login to receive a JWT access token."""
+    if database.use_supabase_store():
+        user = supabase_store.get_user_by_email(form_data.username)
+        if not user or not auth.verify_password(form_data.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        access_token = auth.create_access_token(
+            data={"sub": user.email, "role": user.role.value}
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
     if not user or not auth.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -105,6 +133,21 @@ def login_with_supabase(
 
     if not email:
         raise HTTPException(status_code=400, detail="Supabase user has no email address.")
+
+    if database.use_supabase_store():
+        user = supabase_store.get_user_by_email(email)
+        if not user:
+            user = supabase_store.create_user(
+                email=email,
+                hashed_password=f"supabase:{supabase_user_id}",
+                role=payload.role,
+            )
+            supabase_store.ensure_welcome_bonus(user.id)
+
+        access_token = auth.create_access_token(
+            data={"sub": user.email, "role": user.role.value}
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
 
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
@@ -136,6 +179,9 @@ def read_users_me(
     db: Session = Depends(database.get_db)
 ):
     """Get the current user's profile and calculated total credits from the ledger."""
+    if database.use_supabase_store():
+        return supabase_store.user_profile(current_user)
+
     if current_user.role == models.RoleEnum.organizer:
         activities = db.query(models.Activity).filter(models.Activity.organizer_id == current_user.id).all()
         act_titles = [f"Earned from activity: {act.title}" for act in activities]
@@ -161,6 +207,17 @@ def get_all_activities(
     db: Session = Depends(database.get_db)
 ):
     """Get all active activities for the map view. Accessible to any authenticated user."""
+    if database.use_supabase_store():
+        activities = supabase_store.store.select(
+            "activities",
+            params={"is_active": "eq.true"},
+            order="id.desc",
+        )
+        return [
+            supabase_store.activity_response(activity, user_status="Available")
+            for activity in activities
+        ]
+
     activities = db.query(models.Activity).filter(models.Activity.is_active == True).all()
     for act in activities:
         setattr(act, "user_status", "Available")

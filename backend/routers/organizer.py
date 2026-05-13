@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List
+import base64
 import uuid
 import os
 import shutil
 
 import models, schemas, database
+import supabase_store
 from auth import get_current_organizer
 
 router = APIRouter(prefix="/organizer", tags=["Organizer"])
@@ -34,6 +36,17 @@ def upload_activity_image(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PNG and JPG files are supported."
         )
+
+    if database.use_supabase_store():
+        content = file.file.read()
+        if len(content) > 2 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please upload an image smaller than 2 MB."
+            )
+        mime_type = file.content_type or "image/jpeg"
+        encoded = base64.b64encode(content).decode("ascii")
+        return {"image_url": f"data:{mime_type};base64,{encoded}"}
     
     filename = f"{uuid.uuid4()}_{file.filename}"
     static_dir = os.getenv("GREEN_CREDITS_STATIC_DIR")
@@ -69,6 +82,22 @@ def create_activity(
     A dynamic QR string is automatically generated for check-ins.
     """
     qr_string = str(uuid.uuid4())
+
+    if database.use_supabase_store():
+        row = supabase_store.store.insert(
+            "activities",
+            {
+                "title": activity.title,
+                "description": activity.description,
+                "location": activity.location,
+                "credits_reward": activity.credits_reward,
+                "qr_string": qr_string,
+                "image_url": activity.image_url,
+                "organizer_id": current_user.id,
+                "is_active": True,
+            },
+        )
+        return supabase_store.activity_response(row)
     
     new_activity = models.Activity(
         title=activity.title,
@@ -92,6 +121,45 @@ def get_organizer_activities(
     """
     Get all activities created by the current organizer with their pending checkins.
     """
+    if database.use_supabase_store():
+        activities = supabase_store.store.select(
+            "activities",
+            params={"organizer_id": f"eq.{current_user.id}"},
+            order="id.desc",
+        )
+        earned_ledgers = supabase_store.store.select(
+            "ledger",
+            params={"transaction_type": "eq.earned"},
+        )
+
+        response = []
+        for activity in activities:
+            participations = supabase_store.store.select(
+                "participations",
+                params={"activity_id": f"eq.{activity['id']}"},
+            )
+            desc = f"Earned from activity: {activity['title']}"
+            awarded_user_ids = {
+                ledger["user_id"]
+                for ledger in earned_ledgers
+                if ledger.get("description") == desc
+            }
+            pending_count = sum(
+                1 for participation in participations
+                if participation["user_id"] not in awarded_user_ids
+            )
+
+            if pending_count > 0:
+                user_status = f"{pending_count} Pending"
+            elif participations:
+                user_status = "Up to date"
+            else:
+                user_status = "Available"
+
+            response.append(supabase_store.activity_response(activity, user_status=user_status))
+
+        return response
+
     activities = db.query(models.Activity).filter(
         models.Activity.organizer_id == current_user.id
     ).all()
@@ -133,6 +201,25 @@ def get_organizer_ledger(
     """
     Get all ledger entries for credits distributed by this organizer.
     """
+    if database.use_supabase_store():
+        activities = supabase_store.store.select(
+            "activities",
+            params={"organizer_id": f"eq.{current_user.id}"},
+        )
+        activity_titles = {f"Earned from activity: {activity['title']}" for activity in activities}
+        if not activity_titles:
+            return []
+
+        entries = supabase_store.store.select(
+            "ledger",
+            params={"transaction_type": "eq.earned"},
+            order="timestamp.desc",
+        )
+        return [
+            entry for entry in entries
+            if entry.get("description") in activity_titles
+        ]
+
     activities = db.query(models.Activity).filter(models.Activity.organizer_id == current_user.id).all()
     act_titles = [f"Earned from activity: {act.title}" for act in activities]
     
@@ -157,6 +244,52 @@ def bulk_award_credits(
     Verifies that the current organizer actually created the activity.
     Creates Ledger entries for each volunteer to ensure financial-grade auditability.
     """
+    if database.use_supabase_store():
+        activity = supabase_store.store.select_one(
+            "activities",
+            params={
+                "id": f"eq.{activity_id}",
+                "organizer_id": f"eq.{current_user.id}",
+            },
+        )
+
+        if not activity:
+            raise HTTPException(
+                status_code=404,
+                detail="Activity not found or you don't have permission to modify it."
+            )
+
+        participations = supabase_store.store.select(
+            "participations",
+            params={"activity_id": f"eq.{activity_id}"},
+        )
+        desc = f"Earned from activity: {activity['title']}"
+        existing_ledgers = supabase_store.store.select(
+            "ledger",
+            params={
+                "description": f"eq.{desc}",
+                "transaction_type": "eq.earned",
+            },
+        )
+        awarded_user_ids = {ledger["user_id"] for ledger in existing_ledgers}
+        awarded_count = 0
+
+        for participation in participations:
+            if participation["user_id"] in awarded_user_ids:
+                continue
+            supabase_store.store.insert(
+                "ledger",
+                {
+                    "user_id": participation["user_id"],
+                    "amount": activity["credits_reward"],
+                    "transaction_type": models.TransactionType.earned.value,
+                    "description": desc,
+                },
+            )
+            awarded_count += 1
+
+        return {"msg": f"Successfully awarded credits to {awarded_count} volunteers."}
+
     activity = db.query(models.Activity).filter(
         models.Activity.id == activity_id,
         models.Activity.organizer_id == current_user.id
@@ -204,6 +337,20 @@ def create_reward(
     current_user: models.User = Depends(get_current_organizer)
 ):
     """Create a new reward."""
+    if database.use_supabase_store():
+        return supabase_store.store.insert(
+            "rewards",
+            {
+                "name": reward.name,
+                "description": reward.description,
+                "cost": reward.cost,
+                "icon_emoji": reward.icon_emoji,
+                "color_gradient": reward.color_gradient,
+                "is_active": True,
+                "organizer_id": current_user.id,
+            },
+        )
+
     new_reward = models.Reward(
         name=reward.name,
         description=reward.description,
@@ -223,6 +370,13 @@ def get_organizer_rewards(
     current_user: models.User = Depends(get_current_organizer)
 ):
     """Get all rewards created by the current organizer."""
+    if database.use_supabase_store():
+        return supabase_store.store.select(
+            "rewards",
+            params={"organizer_id": f"eq.{current_user.id}"},
+            order="id.desc",
+        )
+
     return db.query(models.Reward).filter(models.Reward.organizer_id == current_user.id).all()
 
 @router.post("/badges", response_model=schemas.BadgeResponse)
@@ -232,6 +386,18 @@ def create_badge(
     current_user: models.User = Depends(get_current_organizer)
 ):
     """Create a new badge."""
+    if database.use_supabase_store():
+        return supabase_store.store.insert(
+            "badges",
+            {
+                "name": badge.name,
+                "description": badge.description,
+                "icon_emoji": badge.icon_emoji,
+                "required_credits": badge.required_credits,
+                "organizer_id": current_user.id,
+            },
+        )
+
     new_badge = models.Badge(
         name=badge.name,
         description=badge.description,
@@ -250,4 +416,11 @@ def get_organizer_badges(
     current_user: models.User = Depends(get_current_organizer)
 ):
     """Get all badges created by the current organizer."""
+    if database.use_supabase_store():
+        return supabase_store.store.select(
+            "badges",
+            params={"organizer_id": f"eq.{current_user.id}"},
+            order="id.desc",
+        )
+
     return db.query(models.Badge).filter(models.Badge.organizer_id == current_user.id).all()

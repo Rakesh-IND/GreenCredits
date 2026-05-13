@@ -47,6 +47,11 @@ const AuthCallback = () => {
       const userResponse = await fetch(`${API_BASE_URL}/api/users/me`, {
         headers: { Authorization: `Bearer ${tokenData.access_token}` }
       });
+      if (!userResponse.ok) {
+        const payload = await userResponse.json().catch(() => ({}));
+        throw new Error(payload.detail || 'Unable to load your profile after Google sign-in.');
+      }
+
       const userData = await userResponse.json();
       localStorage.setItem('user', JSON.stringify(userData));
       localStorage.removeItem('preferredRole');

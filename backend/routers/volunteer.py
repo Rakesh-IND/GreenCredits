@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List
 
 import models, schemas, database
+import supabase_store
 from auth import get_current_volunteer
 
 router = APIRouter(prefix="/volunteer", tags=["Volunteer"])
@@ -18,6 +19,42 @@ def get_nearby_activities(
     Get nearby activities. 
     Returns all active activities with user-specific status (Available, Checked In, or Finished).
     """
+    if database.use_supabase_store():
+        activities = supabase_store.store.select(
+            "activities",
+            params={"is_active": "eq.true"},
+            order="id.desc",
+        )
+        participations = supabase_store.store.select(
+            "participations",
+            params={"user_id": f"eq.{current_user.id}"},
+        )
+        part_activity_ids = {row["activity_id"] for row in participations}
+        ledgers = supabase_store.store.select(
+            "ledger",
+            params={
+                "user_id": f"eq.{current_user.id}",
+                "transaction_type": "eq.earned",
+            },
+        )
+        earned_titles = {
+            row["description"].replace("Earned from activity: ", "")
+            for row in ledgers
+            if row.get("description", "").startswith("Earned from activity: ")
+        }
+
+        response = []
+        for activity in activities:
+            if activity["title"] in earned_titles:
+                user_status = "Finished"
+            elif activity["id"] in part_activity_ids:
+                user_status = "Checked In"
+            else:
+                user_status = "Available"
+            response.append(supabase_store.activity_response(activity, user_status=user_status))
+
+        return response
+
     activities = db.query(models.Activity).filter(models.Activity.is_active == True).all()
     
     # Pre-fetch user participations and ledgers to determine status
@@ -62,6 +99,44 @@ def qr_checkin(
     Endpoint for volunteers to check in using a QR string.
     Validates the string, checks if the activity is active, and ensures no duplicate check-ins.
     """
+    if database.use_supabase_store():
+        activity = supabase_store.store.select_one(
+            "activities",
+            params={
+                "qr_string": f"eq.{checkin_data.qr_string}",
+                "is_active": "eq.true",
+            },
+        )
+
+        if not activity:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid QR code string or the activity is no longer active."
+            )
+
+        existing_participation = supabase_store.store.select_one(
+            "participations",
+            params={
+                "user_id": f"eq.{current_user.id}",
+                "activity_id": f"eq.{activity['id']}",
+            },
+        )
+
+        if existing_participation:
+            raise HTTPException(
+                status_code=400,
+                detail="You have already checked into this activity."
+            )
+
+        supabase_store.store.insert(
+            "participations",
+            {
+                "user_id": current_user.id,
+                "activity_id": activity["id"],
+            },
+        )
+        return {"msg": "Successfully checked in! Waiting for organizer to award credits."}
+
     activity = db.query(models.Activity).filter(
         models.Activity.qr_string == checkin_data.qr_string,
         models.Activity.is_active == True
@@ -117,6 +192,13 @@ def get_ledger_history(
     Get the financial-grade ledger history for the volunteer.
     These are immutable transactions of earned and redeemed credits.
     """
+    if database.use_supabase_store():
+        return supabase_store.store.select(
+            "ledger",
+            params={"user_id": f"eq.{current_user.id}"},
+            order="timestamp.desc",
+        )
+
     entries = db.query(models.Ledger).filter(
         models.Ledger.user_id == current_user.id
     ).order_by(models.Ledger.timestamp.desc()).all()
@@ -127,6 +209,38 @@ def get_leaderboard(db: Session = Depends(database.get_db)):
     """
     Get the top volunteers ranked by their total accumulated credits.
     """
+    if database.use_supabase_store():
+        volunteers = supabase_store.store.select(
+            "users",
+            params={"role": "eq.volunteer"},
+        )
+        ledgers = supabase_store.store.select("ledger")
+
+        processed = []
+        for user in volunteers:
+            user_ledgers = [row for row in ledgers if row["user_id"] == user["id"]]
+            earned = sum(
+                float(row["amount"])
+                for row in user_ledgers
+                if row["transaction_type"] == models.TransactionType.earned.value
+            )
+            redeemed = sum(
+                float(row["amount"])
+                for row in user_ledgers
+                if row["transaction_type"] == models.TransactionType.redeemed.value
+            )
+            processed.append({
+                "id": user["id"],
+                "email": user["email"],
+                "total_credits": earned - redeemed,
+            })
+
+        processed.sort(key=lambda item: item["total_credits"], reverse=True)
+        for index, row in enumerate(processed):
+            row["rank"] = index + 1
+
+        return processed[:50]
+
     volunteers = db.query(models.User).filter(models.User.role == models.RoleEnum.volunteer).all()
     
     processed = []
@@ -153,11 +267,21 @@ def get_leaderboard(db: Session = Depends(database.get_db)):
 @router.get("/rewards", response_model=List[schemas.RewardResponse])
 def get_available_rewards(db: Session = Depends(database.get_db)):
     """Get all active rewards available for redemption."""
+    if database.use_supabase_store():
+        return supabase_store.store.select(
+            "rewards",
+            params={"is_active": "eq.true"},
+            order="id.desc",
+        )
+
     return db.query(models.Reward).filter(models.Reward.is_active == True).all()
 
 @router.get("/badges", response_model=List[schemas.BadgeResponse])
 def get_available_badges(db: Session = Depends(database.get_db)):
     """Get all available badges."""
+    if database.use_supabase_store():
+        return supabase_store.store.select("badges", order="id.desc")
+
     return db.query(models.Badge).all()
 
 class RedeemRequest(BaseModel):
@@ -173,6 +297,57 @@ def redeem_reward(
     Redeem a reward by deducting credits from the volunteer's balance.
     Validates sufficient balance before proceeding.
     """
+    if database.use_supabase_store():
+        reward = supabase_store.store.select_one(
+            "rewards",
+            params={
+                "id": f"eq.{payload.reward_id}",
+                "is_active": "eq.true",
+            },
+        )
+
+        if not reward:
+            raise HTTPException(status_code=404, detail="Reward not found or inactive")
+
+        balance = supabase_store.ledger_balance(current_user.id)
+        cost = float(reward["cost"])
+
+        if balance < cost:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient credits. You need {cost:.0f} credits but only have {balance:.0f}."
+            )
+
+        redemption_description = f"Redeemed reward: {reward['name']}"
+        existing_redemption = supabase_store.store.select_one(
+            "ledger",
+            params={
+                "user_id": f"eq.{current_user.id}",
+                "transaction_type": "eq.redeemed",
+                "description": f"eq.{redemption_description}",
+            },
+        )
+
+        if existing_redemption:
+            raise HTTPException(
+                status_code=400,
+                detail="You have already redeemed this reward."
+            )
+
+        supabase_store.store.insert(
+            "ledger",
+            {
+                "user_id": current_user.id,
+                "amount": cost,
+                "transaction_type": models.TransactionType.redeemed.value,
+                "description": redemption_description,
+            },
+        )
+        return {
+            "msg": f"Successfully redeemed '{reward['name']}'!",
+            "remaining_credits": balance - cost,
+        }
+
     # Look up the reward from the database to ensure the cost is accurate
     reward = db.query(models.Reward).filter(
         models.Reward.id == payload.reward_id,

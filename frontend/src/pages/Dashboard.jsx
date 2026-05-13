@@ -190,6 +190,7 @@ const Dashboard = () => {
           }
 
         } else {
+          let liveLedger = [];
           const resAct = await fetch(`${API_BASE_URL}/api/volunteer/activities/nearby`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
@@ -214,6 +215,7 @@ const Dashboard = () => {
           });
           if (resLedger.ok) {
             const ledg = await resLedger.json();
+            liveLedger = ledg;
             setLedger(ledg);
           }
 
@@ -221,7 +223,14 @@ const Dashboard = () => {
           const resRewards = await fetch(`${API_BASE_URL}/api/volunteer/rewards`, { headers: { 'Authorization': `Bearer ${token}` } });
           if (resRewards.ok) {
             const data = await resRewards.json();
-            setCatalogRewards(data.length > 0 ? data : DEFAULT_REWARDS);
+            const rewards = data.length > 0 ? data : DEFAULT_REWARDS;
+            const redeemedNames = new Set(
+              liveLedger
+                .filter(entry => entry.transaction_type === 'redeemed' && entry.description?.startsWith('Redeemed reward: '))
+                .map(entry => entry.description.replace('Redeemed reward: ', ''))
+            );
+            setCatalogRewards(rewards);
+            setClaimedRewards(rewards.filter(reward => redeemedNames.has(reward.name)).map(reward => reward.id));
           }
 
           // Fetch dynamic badges

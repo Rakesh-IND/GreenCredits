@@ -10,6 +10,7 @@ from jose import JWTError, jwt
 import models, schemas, database
 from config import settings
 import os
+import supabase_store
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
@@ -83,6 +84,27 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
         
+    if database.use_supabase_store():
+        user = supabase_store.get_user_by_email(email)
+        if user is None:
+            try:
+                role = models.RoleEnum(token_role)
+            except (TypeError, ValueError):
+                raise credentials_exception
+
+            try:
+                user = supabase_store.create_user(
+                    email=email,
+                    hashed_password=f"token-recovered:{email}",
+                    role=role
+                )
+                if role == models.RoleEnum.volunteer:
+                    supabase_store.ensure_welcome_bonus(user.id)
+            except HTTPException:
+                raise credentials_exception
+
+        return user
+
     user = db.query(models.User).filter(models.User.email == email).first()
     if user is None:
         try:

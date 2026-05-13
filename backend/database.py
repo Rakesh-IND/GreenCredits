@@ -20,6 +20,19 @@ def resolve_database_url(database_url: str) -> str:
 
 SQLALCHEMY_DATABASE_URL = resolve_database_url(str(settings.DATABASE_URL))
 
+def use_supabase_store() -> bool:
+    flag = os.getenv("GREEN_CREDITS_USE_SUPABASE_REST", "").lower()
+    if flag in {"1", "true", "yes"}:
+        return bool(settings.SUPABASE_URL and settings.SUPABASE_PUBLISHABLE_KEY)
+
+    has_explicit_database = bool(os.getenv("DATABASE_URL"))
+    is_serverless = bool(os.getenv("VERCEL"))
+    return (
+        is_serverless
+        and not has_explicit_database
+        and bool(settings.SUPABASE_URL and settings.SUPABASE_PUBLISHABLE_KEY)
+    )
+
 # SQLite fallback config just in case, but Postgres is expected
 connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
 
