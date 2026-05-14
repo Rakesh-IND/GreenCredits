@@ -105,6 +105,16 @@ class SupabaseStore:
             )
         return rows[0]
 
+    def delete(self, table: str, *, params: dict[str, Any]) -> None:
+        query = {"select": "id"}
+        query.update(params)
+        self.request(
+            "DELETE",
+            table,
+            params=query,
+            prefer="return=minimal",
+        )
+
 
 store = SupabaseStore()
 
@@ -176,13 +186,33 @@ def organizer_name(organizer_id: int) -> str:
 
 
 def ledger_balance(user_id: int) -> float:
-    ledgers = store.select("ledger", params={"user_id": f"eq.{user_id}"})
+    ledgers = visible_ledger_rows(store.select("ledger", params={"user_id": f"eq.{user_id}"}))
     return sum(
         float(row["amount"])
         if row["transaction_type"] == models.TransactionType.earned.value
         else -float(row["amount"])
         for row in ledgers
     )
+
+
+def visible_ledger_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row for row in rows
+        if not str(row.get("description") or "").startswith("CHAT|")
+    ]
+
+
+def lifetime_credits(user_id: int) -> float:
+    ledgers = visible_ledger_rows(
+        store.select(
+            "ledger",
+            params={
+                "user_id": f"eq.{user_id}",
+                "transaction_type": "eq.earned",
+            },
+        )
+    )
+    return sum(float(row["amount"]) for row in ledgers if float(row["amount"]) > 0)
 
 
 def user_profile(user: StoredUser) -> dict[str, Any]:
@@ -197,14 +227,17 @@ def user_profile(user: StoredUser) -> dict[str, Any]:
                 for row in ledgers
                 if row.get("description") in activity_titles
             )
+        lifetime = total
     else:
         total = ledger_balance(user.id)
+        lifetime = lifetime_credits(user.id)
 
     return {
         "id": user.id,
         "email": user.email,
         "role": user.role.value,
         "total_credits": total,
+        "lifetime_credits": lifetime,
     }
 
 

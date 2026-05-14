@@ -193,14 +193,16 @@ def get_ledger_history(
     These are immutable transactions of earned and redeemed credits.
     """
     if database.use_supabase_store():
-        return supabase_store.store.select(
+        rows = supabase_store.store.select(
             "ledger",
             params={"user_id": f"eq.{current_user.id}"},
             order="timestamp.desc",
         )
+        return supabase_store.visible_ledger_rows(rows)
 
     entries = db.query(models.Ledger).filter(
-        models.Ledger.user_id == current_user.id
+        models.Ledger.user_id == current_user.id,
+        ~models.Ledger.description.like("CHAT|%")
     ).order_by(models.Ledger.timestamp.desc()).all()
     return entries
 
@@ -287,6 +289,9 @@ def get_available_badges(db: Session = Depends(database.get_db)):
 class RedeemRequest(BaseModel):
     reward_id: int
 
+def reward_redemption_description(reward_id: int, reward_name: str) -> str:
+    return f"Redeemed reward #{reward_id}: {reward_name}"
+
 @router.post("/redeem")
 def redeem_reward(
     payload: RedeemRequest,
@@ -318,13 +323,13 @@ def redeem_reward(
                 detail=f"Insufficient credits. You need {cost:.0f} credits but only have {balance:.0f}."
             )
 
-        redemption_description = f"Redeemed reward: {reward['name']}"
+        redemption_prefix = f"Redeemed reward #{payload.reward_id}:"
         existing_redemption = supabase_store.store.select_one(
             "ledger",
             params={
                 "user_id": f"eq.{current_user.id}",
                 "transaction_type": "eq.redeemed",
-                "description": f"eq.{redemption_description}",
+                "description": f"like.{redemption_prefix}*",
             },
         )
 
@@ -340,7 +345,7 @@ def redeem_reward(
                 "user_id": current_user.id,
                 "amount": cost,
                 "transaction_type": models.TransactionType.redeemed.value,
-                "description": redemption_description,
+                "description": reward_redemption_description(payload.reward_id, reward["name"]),
             },
         )
         return {
@@ -370,11 +375,11 @@ def redeem_reward(
             detail=f"Insufficient credits. You need {reward.cost} credits but only have {balance:.0f}."
         )
 
-    redemption_description = f"Redeemed reward: {reward.name}"
+    redemption_prefix = f"Redeemed reward #{payload.reward_id}:"
     existing_redemption = db.query(models.Ledger).filter(
         models.Ledger.user_id == current_user.id,
         models.Ledger.transaction_type == models.TransactionType.redeemed,
-        models.Ledger.description == redemption_description
+        models.Ledger.description.like(f"{redemption_prefix}%")
     ).first()
 
     if existing_redemption:
@@ -388,7 +393,7 @@ def redeem_reward(
         user_id=current_user.id,
         amount=reward.cost,
         transaction_type=models.TransactionType.redeemed,
-        description=redemption_description
+        description=reward_redemption_description(payload.reward_id, reward.name)
     )
     db.add(entry)
     try:

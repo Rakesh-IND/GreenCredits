@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 
 import models, database, auth, schemas
 import supabase_store
-from routers import organizer, volunteer
+from routers import chat, organizer, volunteer
 from config import settings
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +47,7 @@ app.add_middleware(
 # Include core routers for strict RBAC isolation
 app.include_router(organizer.router)
 app.include_router(volunteer.router)
+app.include_router(chat.router)
 
 @app.post("/auth/register", response_model=schemas.UserResponse, tags=["Authentication"])
 def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -194,10 +195,19 @@ def read_users_me(
         else:
             total = 0.0
         setattr(current_user, "total_credits", total)
+        setattr(current_user, "lifetime_credits", total)
     else:
-        ledgers = db.query(models.Ledger).filter(models.Ledger.user_id == current_user.id).all()
+        ledgers = db.query(models.Ledger).filter(
+            models.Ledger.user_id == current_user.id,
+            ~models.Ledger.description.like("CHAT|%")
+        ).all()
         total = sum(l.amount if l.transaction_type == models.TransactionType.earned else -l.amount for l in ledgers)
+        lifetime = sum(
+            l.amount for l in ledgers
+            if l.transaction_type == models.TransactionType.earned and l.amount > 0
+        )
         setattr(current_user, "total_credits", total)
+        setattr(current_user, "lifetime_credits", lifetime)
         
     return current_user
 

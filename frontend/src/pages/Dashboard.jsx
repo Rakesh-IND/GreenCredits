@@ -3,7 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   ChevronDown, Bell, Plus, MoreVertical, Search, CheckCircle, LogOut, Sparkles, Star, Trophy,
-  Gift, Award, Leaf, Heart, Zap, ShoppingBag, Coffee, TreePine, Droplets, MapPin, BarChart3, CalendarCheck, ShieldCheck
+  Gift, Award, Leaf, Heart, Zap, ShoppingBag, Coffee, TreePine, Droplets, MapPin, BarChart3, CalendarCheck, ShieldCheck,
+  MessageCircle, Send, Users, UserPlus, Trash2, Copy, CheckCheck, X
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -52,6 +53,13 @@ const Dashboard = () => {
   const [newReward, setNewReward] = useState({ name: '', description: '', cost: 100, icon_emoji: '🎁', color_gradient: 'from-emerald-500 to-teal-500' });
   const [newBadge, setNewBadge] = useState({ name: '', description: '', icon_emoji: '🏆', required_credits: 500 });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [managedVolunteers, setManagedVolunteers] = useState([]);
+  const [manualCheckinEmail, setManualCheckinEmail] = useState('');
+  const [isLoadingVolunteers, setIsLoadingVolunteers] = useState(false);
+  const [chatActivity, setChatActivity] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatDraft, setChatDraft] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
   const handleSessionExpired = () => {
     localStorage.clear();
@@ -98,6 +106,150 @@ const Dashboard = () => {
     }
   };
 
+  const loadManagedVolunteers = async (activityId) => {
+    if (user?.role !== 'organizer') return;
+    setIsLoadingVolunteers(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/api/organizer/activities/${activityId}/volunteers`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => []);
+      if (res.ok) {
+        setManagedVolunteers(data);
+      } else if (res.status === 401) {
+        handleSessionExpired();
+      } else {
+        toast.error(parseApiError(data, 'Unable to load volunteers'));
+      }
+    } catch (e) {
+      toast.error('Unable to load volunteers');
+    } finally {
+      setIsLoadingVolunteers(false);
+    }
+  };
+
+  const openActivityModal = (activity) => {
+    setSelectedActivity(activity);
+    setIsModalOpen(true);
+    setManualCheckinEmail('');
+    setManagedVolunteers([]);
+    if (user?.role === 'organizer') {
+      loadManagedVolunteers(activity.id);
+    }
+  };
+
+  const handleManualCheckin = async () => {
+    if (!selectedActivity || !manualCheckinEmail.trim()) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/api/organizer/activities/${selectedActivity.id}/volunteers/manual-checkin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ email: manualCheckinEmail.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(data.msg || 'Volunteer checked in');
+        setManualCheckinEmail('');
+        loadManagedVolunteers(selectedActivity.id);
+        fetchData(token);
+      } else {
+        toast.error(parseApiError(data, 'Unable to check in volunteer'));
+      }
+    } catch (e) {
+      toast.error('Unable to check in volunteer');
+    }
+  };
+
+  const handleApproveVolunteer = async (activityId, userId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/api/organizer/activities/${activityId}/volunteers/${userId}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(data.msg || 'Volunteer approved');
+        loadManagedVolunteers(activityId);
+        fetchData(token);
+      } else {
+        toast.error(parseApiError(data, 'Unable to approve volunteer'));
+      }
+    } catch (e) {
+      toast.error('Unable to approve volunteer');
+    }
+  };
+
+  const handleRemoveVolunteer = async (activityId, userId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/api/organizer/activities/${activityId}/volunteers/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(data.msg || 'Volunteer removed');
+        loadManagedVolunteers(activityId);
+        fetchData(token);
+      } else {
+        toast.error(parseApiError(data, 'Unable to remove volunteer'));
+      }
+    } catch (e) {
+      toast.error('Unable to remove volunteer');
+    }
+  };
+
+  const fetchChatMessages = async (activityId, quiet = false) => {
+    if (!activityId) return;
+    if (!quiet) setIsChatLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/api/chat/activities/${activityId}/messages`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => []);
+      if (res.ok) {
+        setChatMessages(data);
+      } else if (!quiet) {
+        toast.error(parseApiError(data, 'Unable to load chat'));
+      }
+    } catch (e) {
+      if (!quiet) toast.error('Unable to load chat');
+    } finally {
+      if (!quiet) setIsChatLoading(false);
+    }
+  };
+
+  const openChat = (activity) => {
+    setChatActivity(activity);
+    setChatMessages([]);
+    fetchChatMessages(activity.id);
+  };
+
+  const sendChatMessage = async () => {
+    if (!chatActivity || !chatDraft.trim()) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/api/chat/activities/${chatActivity.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ message: chatDraft.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setChatDraft('');
+        setChatMessages(prev => [...prev, data]);
+      } else {
+        toast.error(parseApiError(data, 'Unable to send message'));
+      }
+    } catch (e) {
+      toast.error('Unable to send message');
+    }
+  };
+
   // Dynamic Catalog Data
   const [catalogRewards, setCatalogRewards] = useState([
     { id: 101, name: 'Eco Water Bottle', description: 'Premium BPA-free reusable water bottle', cost: 150, icon_emoji: '💧', color_gradient: 'from-cyan-500 to-blue-500', is_active: true, organizer_id: 1 },
@@ -121,6 +273,14 @@ const Dashboard = () => {
       fetchData(token);
     }
   }, []);
+
+  useEffect(() => {
+    if (!chatActivity) return undefined;
+
+    fetchChatMessages(chatActivity.id);
+    const interval = window.setInterval(() => fetchChatMessages(chatActivity.id, true), 3500);
+    return () => window.clearInterval(interval);
+  }, [chatActivity?.id]);
 
   const DEFAULT_REWARDS = [
     { id: 101, name: 'Eco Water Bottle', description: 'Premium BPA-free reusable water bottle', cost: 150, icon_emoji: '💧', color_gradient: 'from-cyan-500 to-blue-500', is_active: true, organizer_id: 1 },
@@ -224,13 +384,19 @@ const Dashboard = () => {
           if (resRewards.ok) {
             const data = await resRewards.json();
             const rewards = data.length > 0 ? data : DEFAULT_REWARDS;
-            const redeemedNames = new Set(
+            const redeemedIds = new Set(
               liveLedger
                 .filter(entry => entry.transaction_type === 'redeemed' && entry.description?.startsWith('Redeemed reward: '))
                 .map(entry => entry.description.replace('Redeemed reward: ', ''))
             );
+            liveLedger
+              .filter(entry => entry.transaction_type === 'redeemed' && entry.description?.startsWith('Redeemed reward #'))
+              .forEach(entry => {
+                const match = entry.description.match(/^Redeemed reward #(\d+):/);
+                if (match) redeemedIds.add(Number(match[1]));
+              });
             setCatalogRewards(rewards);
-            setClaimedRewards(rewards.filter(reward => redeemedNames.has(reward.name)).map(reward => reward.id));
+            setClaimedRewards(rewards.filter(reward => redeemedIds.has(reward.id) || redeemedIds.has(reward.name)).map(reward => reward.id));
           }
 
           // Fetch dynamic badges
@@ -376,7 +542,7 @@ const Dashboard = () => {
   }
 
   const credits = user.total_credits || 0;
-  const completedCount = ledger.filter(item => item.transaction_type === 'earned').length;
+  const completedCount = ledger.filter(item => item.transaction_type === 'earned' && item.description?.startsWith('Earned from activity:')).length;
   const redeemedCount = ledger.filter(item => item.transaction_type === 'redeemed').length;
   const projectedTrees = Math.max(1, Math.floor(credits / 200));
   const activeCount = activities.filter(item => item.is_active !== false).length;
@@ -448,7 +614,7 @@ const Dashboard = () => {
     // Determine which badges are earned
     const badgesWithStatus = catalogBadges.map(b => ({
       ...b,
-      isEarned: (user.total_credits || 0) >= b.required_credits
+      isEarned: (user.lifetime_credits ?? user.total_credits ?? 0) >= b.required_credits
     }));
 
     const earnedCount = badgesWithStatus.filter(b => b.isEarned).length;
@@ -914,11 +1080,11 @@ const Dashboard = () => {
                       </span>
 
                       {user.role === 'organizer' ? (
-                        <button onClick={() => { setSelectedActivity(act); setIsModalOpen(true); }} className="text-[12px] font-semibold text-foreground hover:text-accent transition-colors flex items-center gap-1 group/btn">
+                        <button onClick={() => openActivityModal(act)} className="text-[12px] font-semibold text-foreground hover:text-accent transition-colors flex items-center gap-1 group/btn">
                           Manage <span className="group-hover/btn:translate-x-0.5 transition-transform">&rarr;</span>
                         </button>
-                      ) : (!act.user_status || act.user_status === 'Available') && (
-                        <button onClick={() => { setSelectedActivity(act); setIsModalOpen(true); }} className="text-[12px] font-semibold text-foreground hover:text-accent transition-colors flex items-center gap-1 group/btn">
+                      ) : (
+                        <button onClick={() => openActivityModal(act)} className="text-[12px] font-semibold text-foreground hover:text-accent transition-colors flex items-center gap-1 group/btn">
                           Details <span className="group-hover/btn:translate-x-0.5 transition-transform">&rarr;</span>
                         </button>
                       )}
@@ -976,14 +1142,87 @@ const Dashboard = () => {
             </div>
 
             {user.role === 'organizer' ? (
-              <div className="bg-accent/5 rounded-2xl p-5 border border-accent/20 mb-6 flex flex-col items-center">
-                <p className="text-xs font-semibold text-accent uppercase tracking-wider mb-2">QR Code String</p>
-                <div className="bg-background px-4 py-3 rounded-xl border border-border shadow-sm font-mono text-sm w-full text-center select-all">
-                  {act.qr_string}
+              <div className="space-y-4 mb-6">
+                <div className="bg-accent/5 rounded-2xl p-5 border border-accent/20 flex flex-col items-center">
+                  <p className="text-xs font-semibold text-accent uppercase tracking-wider mb-2">QR Code String</p>
+                  <div className="flex w-full gap-2">
+                    <div className="bg-background px-4 py-3 rounded-xl border border-border shadow-sm font-mono text-xs sm:text-sm flex-1 text-center select-all truncate">
+                      {act.qr_string}
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(act.qr_string);
+                        toast.success('QR string copied');
+                      }}
+                      className="h-11 w-11 rounded-xl border border-border bg-background text-foreground hover:text-accent transition-colors flex items-center justify-center"
+                      title="Copy QR string"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-3 text-center">
+                    Share this string with volunteers to let them check in to this activity.
+                  </p>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-3 text-center">
-                  Share this string with volunteers to let them check in to this activity.
-                </p>
+
+                <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-accent" />
+                      <p className="text-sm font-semibold text-foreground">Volunteer Desk</p>
+                    </div>
+                    <button onClick={() => openChat(act)} className="text-xs font-semibold text-accent hover:underline flex items-center gap-1">
+                      <MessageCircle className="h-3.5 w-3.5" /> Chat
+                    </button>
+                  </div>
+
+                  <div className="mb-3 flex gap-2">
+                    <input
+                      type="email"
+                      value={manualCheckinEmail}
+                      onChange={e => setManualCheckinEmail(e.target.value)}
+                      placeholder="volunteer@email.com"
+                      className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-accent"
+                    />
+                    <button
+                      onClick={handleManualCheckin}
+                      disabled={!manualCheckinEmail.trim()}
+                      className="rounded-xl bg-foreground px-3 py-2 text-xs font-semibold text-background disabled:opacity-50 flex items-center gap-1"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" /> Check-in
+                    </button>
+                  </div>
+
+                  <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                    {isLoadingVolunteers && <p className="py-3 text-center text-xs text-muted-foreground">Loading volunteers...</p>}
+                    {!isLoadingVolunteers && managedVolunteers.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">No volunteers checked in yet.</p>}
+                    {managedVolunteers.map(volunteer => (
+                      <div key={volunteer.user_id} className="flex items-center gap-3 rounded-xl border border-border/70 bg-background px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate text-xs font-semibold text-foreground">{volunteer.email}</p>
+                          <p className={`text-[11px] ${volunteer.status === 'Approved' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                            {volunteer.status} · {volunteer.credits_reward} credits
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleApproveVolunteer(act.id, volunteer.user_id)}
+                          disabled={volunteer.status === 'Approved'}
+                          className="h-8 w-8 rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-700 disabled:opacity-40 flex items-center justify-center"
+                          title="Approve and award"
+                        >
+                          <CheckCheck className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleRemoveVolunteer(act.id, volunteer.user_id)}
+                          className="h-8 w-8 rounded-lg border border-rose-100 bg-rose-50 text-rose-600 flex items-center justify-center"
+                          title="Remove volunteer"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="bg-secondary/40 rounded-2xl p-5 border border-border/40 mb-6">
@@ -1007,6 +1246,12 @@ const Dashboard = () => {
                     Check In
                   </button>
                 </div>
+                <button
+                  onClick={() => openChat(act)}
+                  className="mt-3 w-full rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2"
+                >
+                  <MessageCircle className="h-4 w-4" /> Ask organizer
+                </button>
               </div>
             )}
 
@@ -1030,6 +1275,122 @@ const Dashboard = () => {
             </div>
           </div>
         </div>
+      </div>
+    );
+  };
+
+  const renderChatMessages = () => (
+    <div className="flex-1 overflow-y-auto space-y-3 p-4">
+      {isChatLoading && <p className="text-center text-xs text-muted-foreground">Loading conversation...</p>}
+      {!isChatLoading && chatMessages.length === 0 && (
+        <p className="rounded-xl border border-dashed border-border bg-secondary/30 p-4 text-center text-xs text-muted-foreground">
+          Start the conversation for certificates, goodies, QR details, or event updates.
+        </p>
+      )}
+      {chatMessages.map(message => (
+        <div key={message.id} className={`flex ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
+          <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${message.is_mine ? 'bg-emerald-600 text-white' : 'bg-white border border-border text-foreground'}`}>
+            <div className={`mb-1 text-[10px] font-semibold ${message.is_mine ? 'text-emerald-50' : 'text-muted-foreground'}`}>
+              {message.is_mine ? 'You' : `${message.sender_email.split('@')[0]} · ${message.sender_role}`}
+            </div>
+            <p className="leading-relaxed">{message.message}</p>
+            <div className={`mt-1 text-right text-[10px] ${message.is_mine ? 'text-emerald-50/80' : 'text-muted-foreground'}`}>
+              {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderChatComposer = () => (
+    <div className="border-t border-border bg-white/80 p-3">
+      <div className="flex gap-2">
+        <input
+          value={chatDraft}
+          onChange={e => setChatDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              sendChatMessage();
+            }
+          }}
+          placeholder="Ask about QR, certificates, goodies..."
+          className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+        <button
+          onClick={sendChatMessage}
+          disabled={!chatDraft.trim()}
+          className="h-10 w-10 rounded-xl bg-emerald-600 text-white disabled:opacity-50 flex items-center justify-center"
+          title="Send message"
+        >
+          <Send className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderChatTab = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 h-[calc(100vh-220px)] animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="rounded-2xl border border-border bg-background/90 shadow-sm overflow-hidden">
+        <div className="border-b border-border bg-emerald-50/70 px-5 py-4">
+          <h2 className="text-sm font-bold text-emerald-800">Activity Conversations</h2>
+        </div>
+        <div className="max-h-full overflow-y-auto p-3 space-y-2">
+          {activities.length === 0 && <p className="p-4 text-sm text-muted-foreground">No activities available for chat yet.</p>}
+          {activities.map(activity => (
+            <button
+              key={activity.id}
+              onClick={() => openChat(activity)}
+              className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${chatActivity?.id === activity.id ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-border bg-white hover:border-emerald-100 hover:bg-emerald-50/40'}`}
+            >
+              <p className="truncate text-sm font-semibold">{activity.title}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{user.role === 'organizer' ? activity.user_status || 'Available' : activity.organizer_name || 'Organizer'}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-background/90 shadow-sm overflow-hidden flex flex-col min-h-0">
+        {chatActivity ? (
+          <>
+            <div className="flex items-center justify-between border-b border-border bg-white/80 px-5 py-4">
+              <div>
+                <h2 className="text-sm font-bold text-foreground">{chatActivity.title}</h2>
+                <p className="text-xs text-muted-foreground">Live activity chat</p>
+              </div>
+              <button onClick={() => fetchChatMessages(chatActivity.id)} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:text-accent">
+                Refresh
+              </button>
+            </div>
+            {renderChatMessages()}
+            {renderChatComposer()}
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            Choose an activity to open the conversation.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderFloatingChat = () => {
+    if (!chatActivity || activeTab === 'Chat') return null;
+
+    return (
+      <div className="fixed bottom-5 right-5 z-[120] flex h-[460px] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border bg-emerald-600 px-4 py-3 text-white">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold">{chatActivity.title}</p>
+            <p className="text-[11px] text-emerald-50">Activity chat</p>
+          </div>
+          <button onClick={() => setChatActivity(null)} className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {renderChatMessages()}
+        {renderChatComposer()}
       </div>
     );
   };
@@ -1144,7 +1505,7 @@ const Dashboard = () => {
         <div className="w-56 border-r border-border/50 p-4 flex-col gap-2 shrink-0 bg-white/40 backdrop-blur-sm hidden md:flex z-10">
           <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-3 mt-4 px-2">Platform</div>
 
-          {(['Dashboard', 'Activities', 'Insights', 'Ledger', 'Rewards', 'Settings']).map(tab => (
+          {(['Dashboard', 'Activities', 'Chat', 'Insights', 'Ledger', 'Rewards', 'Settings']).map(tab => (
             <div
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1153,6 +1514,7 @@ const Dashboard = () => {
               <span className="flex items-center gap-2">
                 {tab === 'Dashboard' && <Sparkles className="w-4 h-4" />}
                 {tab === 'Activities' && <Leaf className="w-4 h-4" />}
+                {tab === 'Chat' && <MessageCircle className="w-4 h-4" />}
                 {tab === 'Insights' && <BarChart3 className="w-4 h-4" />}
                 {tab === 'Ledger' && <CheckCircle className="w-4 h-4" />}
                 {tab === 'Rewards' && <Gift className="w-4 h-4 text-emerald-500" />}
@@ -1268,6 +1630,12 @@ const Dashboard = () => {
           {activeTab === 'Activities' && (
             <div className="flex flex-col gap-6 w-full max-h-[calc(100vh-220px)] overflow-y-auto pr-2 pb-4 animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both">
               {renderActivitiesGrid()}
+            </div>
+          )}
+
+          {activeTab === 'Chat' && (
+            <div className="flex flex-col gap-6 w-full">
+              {renderChatTab()}
             </div>
           )}
 
@@ -1426,6 +1794,7 @@ const Dashboard = () => {
       </div>
 
       {renderActivityModal()}
+      {renderFloatingChat()}
     </div>
   );
 };

@@ -22,6 +22,7 @@ class UserResponse(UserBase):
 
 class UserProfile(UserResponse):
     total_credits: float
+    lifetime_credits: float = 0.0
 
 class LeaderboardResponse(BaseModel):
     id: int
@@ -105,6 +106,29 @@ class ParticipationResponse(BaseModel):
     check_in_time: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class ManagedVolunteerResponse(BaseModel):
+    user_id: int
+    email: str
+    status: str
+    check_in_time: Optional[datetime] = None
+    credits_reward: float
+
+class ManualCheckInRequest(BaseModel):
+    email: EmailStr
+
+class ChatMessageCreate(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1000)
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    activity_id: int
+    sender_id: int
+    sender_email: str
+    sender_role: RoleEnum
+    message: str
+    timestamp: datetime
+    is_mine: bool
 
 # --- Token Schema --- #
 class Token(BaseModel):

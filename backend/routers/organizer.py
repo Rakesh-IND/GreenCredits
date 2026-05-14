@@ -210,11 +210,11 @@ def get_organizer_ledger(
         if not activity_titles:
             return []
 
-        entries = supabase_store.store.select(
+        entries = supabase_store.visible_ledger_rows(supabase_store.store.select(
             "ledger",
             params={"transaction_type": "eq.earned"},
             order="timestamp.desc",
-        )
+        ))
         return [
             entry for entry in entries
             if entry.get("description") in activity_titles
@@ -228,7 +228,8 @@ def get_organizer_ledger(
         
     entries = db.query(models.Ledger).filter(
         models.Ledger.description.in_(act_titles),
-        models.Ledger.transaction_type == models.TransactionType.earned
+        models.Ledger.transaction_type == models.TransactionType.earned,
+        ~models.Ledger.description.like("CHAT|%")
     ).order_by(models.Ledger.timestamp.desc()).all()
     
     return entries
@@ -329,6 +330,245 @@ def bulk_award_credits(
             
     _commit_or_500(db, "Unable to award credits. Please try again.")
     return {"msg": f"Successfully awarded credits to {awarded_count} volunteers."}
+
+@router.get("/activities/{activity_id}/volunteers", response_model=List[schemas.ManagedVolunteerResponse])
+def get_activity_volunteers(
+    activity_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_organizer)
+):
+    """List volunteers who checked into an organizer-owned activity."""
+    if database.use_supabase_store():
+        activity = supabase_store.store.select_one(
+            "activities",
+            params={"id": f"eq.{activity_id}", "organizer_id": f"eq.{current_user.id}"},
+        )
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found.")
+
+        participations = supabase_store.store.select(
+            "participations",
+            params={"activity_id": f"eq.{activity_id}"},
+            order="check_in_time.desc",
+        )
+        desc = f"Earned from activity: {activity['title']}"
+        awarded_ledgers = supabase_store.store.select(
+            "ledger",
+            params={"description": f"eq.{desc}", "transaction_type": "eq.earned"},
+        )
+        awarded_user_ids = {row["user_id"] for row in awarded_ledgers}
+
+        volunteers = []
+        for participation in participations:
+            participant = supabase_store.get_user_by_id(participation["user_id"])
+            if not participant:
+                continue
+            volunteers.append({
+                "user_id": participant.id,
+                "email": participant.email,
+                "status": "Approved" if participant.id in awarded_user_ids else "Checked In",
+                "check_in_time": participation.get("check_in_time"),
+                "credits_reward": activity["credits_reward"],
+            })
+        return volunteers
+
+    activity = db.query(models.Activity).filter(
+        models.Activity.id == activity_id,
+        models.Activity.organizer_id == current_user.id
+    ).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found.")
+
+    desc = f"Earned from activity: {activity.title}"
+    awarded_user_ids = {
+        row.user_id for row in db.query(models.Ledger).filter(
+            models.Ledger.description == desc,
+            models.Ledger.transaction_type == models.TransactionType.earned
+        ).all()
+    }
+
+    return [
+        {
+            "user_id": participation.user.id,
+            "email": participation.user.email,
+            "status": "Approved" if participation.user_id in awarded_user_ids else "Checked In",
+            "check_in_time": participation.check_in_time,
+            "credits_reward": activity.credits_reward,
+        }
+        for participation in db.query(models.Participation).filter(
+            models.Participation.activity_id == activity_id
+        ).order_by(models.Participation.check_in_time.desc()).all()
+    ]
+
+@router.post("/activities/{activity_id}/volunteers/manual-checkin")
+def manual_checkin_volunteer(
+    activity_id: int,
+    payload: schemas.ManualCheckInRequest,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_organizer)
+):
+    """Let an organizer check in a registered volunteer by email."""
+    if database.use_supabase_store():
+        activity = supabase_store.store.select_one(
+            "activities",
+            params={"id": f"eq.{activity_id}", "organizer_id": f"eq.{current_user.id}"},
+        )
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found.")
+
+        volunteer = supabase_store.get_user_by_email(payload.email)
+        if not volunteer or volunteer.role != models.RoleEnum.volunteer:
+            raise HTTPException(status_code=404, detail="Registered volunteer not found.")
+
+        existing = supabase_store.store.select_one(
+            "participations",
+            params={"activity_id": f"eq.{activity_id}", "user_id": f"eq.{volunteer.id}"},
+        )
+        if existing:
+            return {"msg": "Volunteer is already checked in."}
+
+        supabase_store.store.insert(
+            "participations",
+            {"activity_id": activity_id, "user_id": volunteer.id},
+        )
+        return {"msg": "Volunteer checked in successfully."}
+
+    activity = db.query(models.Activity).filter(
+        models.Activity.id == activity_id,
+        models.Activity.organizer_id == current_user.id
+    ).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found.")
+
+    volunteer = db.query(models.User).filter(
+        models.User.email == payload.email,
+        models.User.role == models.RoleEnum.volunteer
+    ).first()
+    if not volunteer:
+        raise HTTPException(status_code=404, detail="Registered volunteer not found.")
+
+    existing = db.query(models.Participation).filter(
+        models.Participation.activity_id == activity_id,
+        models.Participation.user_id == volunteer.id
+    ).first()
+    if existing:
+        return {"msg": "Volunteer is already checked in."}
+
+    db.add(models.Participation(activity_id=activity_id, user_id=volunteer.id))
+    _commit_or_500(db, "Unable to check in volunteer.")
+    return {"msg": "Volunteer checked in successfully."}
+
+@router.post("/activities/{activity_id}/volunteers/{user_id}/approve")
+def approve_volunteer(
+    activity_id: int,
+    user_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_organizer)
+):
+    """Approve a checked-in volunteer and award activity credits."""
+    if database.use_supabase_store():
+        activity = supabase_store.store.select_one(
+            "activities",
+            params={"id": f"eq.{activity_id}", "organizer_id": f"eq.{current_user.id}"},
+        )
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found.")
+
+        participation = supabase_store.store.select_one(
+            "participations",
+            params={"activity_id": f"eq.{activity_id}", "user_id": f"eq.{user_id}"},
+        )
+        if not participation:
+            raise HTTPException(status_code=400, detail="Volunteer has not checked in yet.")
+
+        desc = f"Earned from activity: {activity['title']}"
+        existing = supabase_store.store.select_one(
+            "ledger",
+            params={"user_id": f"eq.{user_id}", "description": f"eq.{desc}", "transaction_type": "eq.earned"},
+        )
+        if existing:
+            return {"msg": "Volunteer was already approved."}
+
+        supabase_store.store.insert(
+            "ledger",
+            {
+                "user_id": user_id,
+                "amount": activity["credits_reward"],
+                "transaction_type": models.TransactionType.earned.value,
+                "description": desc,
+            },
+        )
+        return {"msg": "Volunteer approved and credits awarded."}
+
+    activity = db.query(models.Activity).filter(
+        models.Activity.id == activity_id,
+        models.Activity.organizer_id == current_user.id
+    ).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found.")
+
+    participation = db.query(models.Participation).filter(
+        models.Participation.activity_id == activity_id,
+        models.Participation.user_id == user_id
+    ).first()
+    if not participation:
+        raise HTTPException(status_code=400, detail="Volunteer has not checked in yet.")
+
+    desc = f"Earned from activity: {activity.title}"
+    existing = db.query(models.Ledger).filter(
+        models.Ledger.user_id == user_id,
+        models.Ledger.description == desc,
+        models.Ledger.transaction_type == models.TransactionType.earned
+    ).first()
+    if existing:
+        return {"msg": "Volunteer was already approved."}
+
+    db.add(models.Ledger(
+        user_id=user_id,
+        amount=activity.credits_reward,
+        transaction_type=models.TransactionType.earned,
+        description=desc,
+    ))
+    _commit_or_500(db, "Unable to approve volunteer.")
+    return {"msg": "Volunteer approved and credits awarded."}
+
+@router.delete("/activities/{activity_id}/volunteers/{user_id}")
+def remove_volunteer(
+    activity_id: int,
+    user_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_organizer)
+):
+    """Remove a volunteer check-in from an organizer-owned activity."""
+    if database.use_supabase_store():
+        activity = supabase_store.store.select_one(
+            "activities",
+            params={"id": f"eq.{activity_id}", "organizer_id": f"eq.{current_user.id}"},
+        )
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found.")
+
+        supabase_store.store.delete(
+            "participations",
+            params={"activity_id": f"eq.{activity_id}", "user_id": f"eq.{user_id}"},
+        )
+        return {"msg": "Volunteer removed from this activity."}
+
+    activity = db.query(models.Activity).filter(
+        models.Activity.id == activity_id,
+        models.Activity.organizer_id == current_user.id
+    ).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found.")
+
+    participation = db.query(models.Participation).filter(
+        models.Participation.activity_id == activity_id,
+        models.Participation.user_id == user_id
+    ).first()
+    if participation:
+        db.delete(participation)
+        _commit_or_500(db, "Unable to remove volunteer.")
+    return {"msg": "Volunteer removed from this activity."}
 
 @router.post("/rewards", response_model=schemas.RewardResponse)
 def create_reward(
