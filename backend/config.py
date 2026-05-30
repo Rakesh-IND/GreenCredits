@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Supabase Auth
     SUPABASE_URL: str = ""
     SUPABASE_PUBLISHABLE_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # Allows fetching from .env file
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)

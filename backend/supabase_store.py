@@ -19,7 +19,8 @@ class StoredUser:
 class SupabaseStore:
     def __init__(self):
         self.base_url = settings.SUPABASE_URL.rstrip("/")
-        self.key = settings.SUPABASE_PUBLISHABLE_KEY
+        self.key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_PUBLISHABLE_KEY
+        self.uses_service_key = bool(settings.SUPABASE_SERVICE_ROLE_KEY)
 
     def _headers(self, prefer: Optional[str] = None) -> dict[str, str]:
         headers = {
@@ -62,6 +63,11 @@ class SupabaseStore:
                 detail = payload.get("message") or payload.get("details") or "Supabase request failed."
             except ValueError:
                 detail = "Supabase request failed."
+            if "row-level security" in detail.lower() and not self.uses_service_key:
+                detail = (
+                    "Supabase RLS blocked this backend write. "
+                    "Set SUPABASE_SERVICE_ROLE_KEY in Vercel for server-side app data access."
+                )
             raise HTTPException(status_code=response.status_code, detail=detail)
 
         if not response.content:
